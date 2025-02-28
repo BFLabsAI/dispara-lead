@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  backend:
+    image: ${REGISTRY}/disparalead-backend:latest
+    build:
+      context: ./backend
+    networks:
+      - disparalead-network
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - EVOLUTION_API_BASE_URL=http://evolution-api:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    image: ${REGISTRY}/disparalead-frontend:latest
+    build:
+      context: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    networks:
+      - disparalead-network
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
+    depends_on:
+      - backend
+
+  evolution-api:
+    image: davidsongomes/evolution-api:v1.5.1
+    networks:
+      - disparalead-network
+    environment:
+      - API_PORT=8080
+      - DEL_INSTANCE=false
+      - AUTHENTICATION_TYPE=apikey
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
+      - LOG_LEVEL=ERROR
+    volumes:
+      - evolution-data:/evolution/instances
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+
+  worker:
+    image: ${REGISTRY}/disparalead-backend:latest
+    networks:
+      - disparalead-network
+    environment:
+      - NODE_ENV=production
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - EVOLUTION_API_BASE_URL=http://evolution-api:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - WORKER_INTERVAL=30000
+      - MAX_CONCURRENT_MESSAGES=10
+    command: ["node", "workers/scheduleWorker.js"]
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    depends_on:
+      - backend
+      - evolution-api
+
+networks:
+  disparalead-network:
+    driver: overlay
+
+volumes:
+  evolution-data:
+    driver: local
